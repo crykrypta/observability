@@ -1,0 +1,64 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+
+    relabel_configs:
+      # container name -> label "container"
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+
+      # compose service -> label "service" (если ты в compose)
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+
+      # путь к файлу логов контейнера
+      - source_labels: [__meta_docker_container_id]
+        target_label: __path__
+        replacement: /var/lib/docker/containers/$1/$1-json.log
+
+    pipeline_stages:
+      # 1) unwrap docker json log line -> output/timestamp/stream
+      - docker: {}
+
+      # 2) parse YOUR structlog json from the "output" field
+      - json:
+          source: output
+          expressions:
+            level: level
+            event: event
+            logger: logger
+            timestamp: timestamp
+            request_id: request_id
+            user_id: user_id
+            model: model
+            status: status
+
+      # 3) labels: держим низкую кардинальность!
+      # request_id/user_id НЕ делай labels — взорвёшь количество стримов
+      - labels:
+          level:
+          service:
+          status:
+          model:
+
+      # 4) use app timestamp (если хочешь "реальное" время события)
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+
+      # 5) в Loki отправляем строку-лог как есть (можно оставить output)
+      - output:
+          source: output
