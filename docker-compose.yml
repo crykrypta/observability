@@ -46,7 +46,6 @@ services:
 
   node-exporter:
     image: prom/node-exporter:latest
-    network_mode: host
     pid: host
     volumes:
       - /:/host:ro,rslave
